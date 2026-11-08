@@ -142,3 +142,50 @@ test("re-tagging a file with a credit for one artist replaces an uploader's list
   const { common } = await parseFile(filePath);
   assert.deepEqual(common.artists, ["Kendrick Lamar"]);
 });
+
+test("a single-track download from a compilation or DJ mix tags the release's album artist, not the performer", async (t) => {
+  const releaseMbid = "d4d4d4d4-d4d4-4d4d-8d4d-d4d4d4d4d4d4";
+  const POMPOUGNAC = "11bf566b-a73e-4e8c-ba82-83fdcddd0aed";
+  const ONE_SELF = "99999999-9999-4999-8999-999999999999";
+  const RECORDING = "88888888-8888-4888-8888-888888888888";
+
+  stubFetch(t, (url) =>
+    isReleaseLookup(url, releaseMbid)
+      ? json({
+          "artist-credit": [
+            { name: "Stéphane Pompougnac", joinphrase: "", artist: { id: POMPOUGNAC } },
+          ],
+          media: [
+            {
+              tracks: [
+                {
+                  "artist-credit": [{ name: "One Self", joinphrase: "", artist: { id: ONE_SELF } }],
+                  recording: { id: RECORDING },
+                },
+              ],
+            },
+          ],
+        })
+      : json({}, 404),
+  );
+
+  const singleTrackJob = {
+    trackName: "Bluebird",
+    artistName: "One Self",
+    albumName: "Hôtel Costes, Volume 9",
+    artistMbid: ONE_SELF,
+    albumMbid: "fce8fe8b-9402-3893-b4a2-5bacefdb8f1f",
+    trackMbid: RECORDING,
+    releaseMbid,
+  };
+
+  const filePath = makeAudio("bluebird.flac", ["-c:a", "flac"]);
+  await writeAudioMetadata(filePath, singleTrackJob);
+
+  const { common } = await parseFile(filePath);
+  assert.equal(common.artist, "One Self");
+  assert.deepEqual(common.artists, ["One Self"]);
+  assert.deepEqual(common.musicbrainz_artistid, [ONE_SELF]);
+  assert.equal(common.albumartist, "Stéphane Pompougnac");
+  assert.equal(common.musicbrainz_albumartistid?.[0], POMPOUGNAC);
+});

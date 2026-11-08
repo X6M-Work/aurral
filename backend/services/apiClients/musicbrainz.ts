@@ -59,6 +59,7 @@ const releaseSchema = v.looseObject({
 });
 
 const releaseTracksSchema = v.looseObject({
+  "artist-credit": artistCreditSchema,
   media: v.optional(
     v.array(
       v.looseObject({
@@ -342,14 +343,25 @@ const toArtistCredit = (raw: MusicBrainzArtistCredit): ArtistCredit =>
       : [];
   });
 
-async function fetchReleaseTrackCredits(releaseMbid: string, signal: AbortSignal) {
+export type ReleaseCredits = Map<string, ArtistCredit> & {
+  releaseCredit?: ArtistCredit | null;
+};
+
+async function fetchReleaseTrackCredits(
+  releaseMbid: string,
+  signal: AbortSignal,
+): Promise<ReleaseCredits> {
   const release = await musicbrainzGet(
     releaseTracksSchema,
     `/release/${releaseMbid}`,
     { inc: "recordings+artist-credits" },
     { signal },
   );
-  const credits = new Map<string, ArtistCredit>();
+  const credits: ReleaseCredits = new Map<string, ArtistCredit>();
+  const releaseCredit = toArtistCredit(release["artist-credit"]);
+  if (releaseCredit.length) {
+    credits.releaseCredit = releaseCredit;
+  }
   for (const track of (release.media ?? []).flatMap((medium) => medium.tracks ?? [])) {
     const recordingMbid = track.recording?.id;
     const credit = toArtistCredit(track["artist-credit"] ?? track.recording?.["artist-credit"]);
@@ -366,7 +378,7 @@ async function fetchReleaseTrackCredits(releaseMbid: string, signal: AbortSignal
 export async function musicbrainzGetReleaseTrackCredits(
   releaseMbid: string,
   { signal }: { signal?: AbortSignal } = {},
-): Promise<Map<string, ArtistCredit>> {
+): Promise<ReleaseCredits> {
   const cached = musicbrainzReleaseCreditsCache.get(releaseMbid);
   if (cached) return cached;
   try {
@@ -380,7 +392,7 @@ export async function musicbrainzGetReleaseTrackCredits(
     return credits;
   } catch (error) {
     signal?.throwIfAborted();
-    const credits = new Map<string, ArtistCredit>();
+    const credits: ReleaseCredits = new Map<string, ArtistCredit>();
     musicbrainzReleaseCreditsCache.set(releaseMbid, credits, RELEASE_CREDITS_RETRY_SECONDS);
     logger.warn("musicbrainz", "Release track credits lookup failed", {
       releaseMbid,

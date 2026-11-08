@@ -316,37 +316,53 @@ const albumGenres = async (albumMbid: string | null | undefined) =>
       )
     : undefined;
 
-async function trackCredit({ releaseMbid, trackMbid, recordingMbidAliases }: DownloadTrackFields) {
-  if (!releaseMbid || !trackMbid) return null;
+async function resolveCredits({
+  releaseMbid,
+  trackMbid,
+  recordingMbidAliases,
+}: DownloadTrackFields) {
+  if (!releaseMbid) return { trackCredit: null, albumArtistCredit: null };
   const credits = await musicbrainzGetReleaseTrackCredits(releaseMbid);
-  for (const mbid of [trackMbid, ...(recordingMbidAliases ?? [])]) {
-    const credit = credits.get(mbid);
-    if (credit) return credit;
+  let trackCredit = null;
+  if (trackMbid) {
+    for (const mbid of [trackMbid, ...(recordingMbidAliases ?? [])]) {
+      const credit = credits.get(mbid);
+      if (credit) {
+        trackCredit = credit;
+        break;
+      }
+    }
   }
-  return null;
+  const albumArtistCredit = credits.releaseCredit?.length ? credits.releaseCredit : null;
+  return { trackCredit, albumArtistCredit };
 }
 
 // A compilation's tracks keep their own performer as the artist. The download
 // job knows which track it fetched, so its identity replaces the uploader's.
 export async function writeAudioMetadata(filePath: string, metadata: DownloadTrackFields = {}) {
-  const credit = await trackCredit(metadata);
+  const { trackCredit, albumArtistCredit } = await resolveCredits(metadata);
   const performer = isVariousArtistsCredit(metadata.artistName, metadata.artistMbid)
     ? metadata.artistAliases?.[0]
     : null;
+  const albumArtist = albumArtistCredit
+    ? formatArtistCredit(albumArtistCredit)
+    : metadata.artistName;
+  const albumArtistMbid =
+    albumArtistCredit?.find((entry) => entry.mbid)?.mbid || metadata.artistMbid;
   return writeAudioTags(
     filePath,
     {
       title: metadata.trackName,
-      artist: credit ? formatArtistCredit(credit) : performer || metadata.artistName,
-      artists: credit?.map((entry) => entry.name),
-      albumArtist: metadata.artistName,
+      artist: trackCredit ? formatArtistCredit(trackCredit) : performer || metadata.artistName,
+      artists: trackCredit?.map((entry) => entry.name),
+      albumArtist,
       album: metadata.albumName,
-      artistMbid: credit
-        ? credit.flatMap((entry) => (entry.mbid ? [entry.mbid] : []))
+      artistMbid: trackCredit
+        ? trackCredit.flatMap((entry) => (entry.mbid ? [entry.mbid] : []))
         : performer
           ? undefined
           : metadata.artistMbid,
-      albumArtistMbid: metadata.artistMbid,
+      albumArtistMbid,
       releaseGroupMbid: metadata.albumMbid,
       releaseMbid: metadata.releaseMbid,
       recordingMbid: metadata.trackMbid,
